@@ -21,6 +21,8 @@ type Alert struct {
 	CriticalLev float64
 	Sustain     int
 	Action      string
+	Links       string
+	Query       string
 }
 
 type AlertInfo struct {
@@ -175,7 +177,8 @@ func extractAlerts(data []string) []RawAlert {
 func extractAlert(r RawAlert) Alert {
 	var a Alert
 	raw := []string{}
-	var posTokens int
+	var tabulationIndex int
+	var alertTabIndex int
 
 	for i := 0; i < len(r); i++ {
 		vals := strings.Split(r[i], ":")
@@ -183,116 +186,142 @@ func extractAlert(r RawAlert) Alert {
 		switch strings.Trim(vals[0], " ") {
 		case "- alert":
 			{
-				i++
-				posTokens = startPos(r[i]) // for i==1
+				alertTabIndex = startPos(r[i])
+				tabulationIndex = startPos(r[i+1]) // for i==1
 			}
 
 		case "name":
 			{
-				if startPos(r[i]) == posTokens {
+				if startPos(r[i]) == tabulationIndex {
 					a.Name = strings.Title(vals[1])
-					continue
 				}
 			}
 
 		case "type":
 			{
-				if startPos(r[i]) == posTokens {
+				if startPos(r[i]) == tabulationIndex {
 					a.Type = strings.Trim(vals[1], " \n")
-					continue
 				}
 			}
 
 		case "description":
 			{
-				if startPos(r[i]) == posTokens {
+				if startPos(r[i]) == tabulationIndex {
 					item := []string{}
 					posToken := strings.Index(r[i], "description")
+					item = append(item, r[i])
 
 					for (startPos(r[i+1]) > posToken) || len(r[i+1]) == 1 {
-						item = append(item, r[i])
+						item = append(item, r[i+1])
 						i++
 					}
 
-					item = append(item, r[i])
 					a.Description = strings.Join(item, "")
-
-					continue
 				}
 			}
 
 		case "query":
 			{
-				if startPos(r[i]) == posTokens {
+				if startPos(r[i]) == tabulationIndex {
 					item := []string{}
 					posToken := strings.Index(r[i], "query")
+					item = append(item, r[i])
 
 					for (startPos(r[i+1]) > posToken) || len(r[i+1]) == 1 {
-						item = append(item, r[i])
+						item = append(item, r[i+1])
 						i++
 					}
 
-					item = append(item, r[i])
-					a.Action = strings.Join(item, "")
+					a.Query = strings.Join(item, "")
+				}
+			}
 
-					continue
+		case "links":
+			{
+				if startPos(r[i]) == tabulationIndex {
+					item := []string{}
+					posToken := strings.Index(r[i], "links")
+					item = append(item, r[i])
+
+					for (startPos(r[i+1]) > posToken) || len(r[i+1]) == 1 {
+						item = append(item, r[i+1])
+						i++
+					}
+
+					a.Links = strings.Join(item, "")
+				}
+			}
+
+		case "actions":
+			{
+				if startPos(r[i]) == tabulationIndex {
+					item := []string{}
+					posToken := strings.Index(r[i], "actions")
+					item = append(item, r[i])
+
+					for (startPos(r[i+1]) > posToken) || len(r[i+1]) == 1 {
+						item = append(item, r[i+1])
+						i++
+					}
+
+					a.Action = strings.Join(item, "")
 				}
 			}
 
 		case "warn":
 			{
-				if startPos(r[i]) == posTokens {
+				if startPos(r[i]) == tabulationIndex {
 					var errWarn error
 					a.WarningLev, errWarn = strconv.ParseFloat(strings.Trim(vals[1], "  \n"), 64)
 					if errWarn != nil {
 						log.Println(errWarn)
 					}
-
-					continue
 				}
 			}
 
 		case "critical":
 			{
-				if startPos(r[i]) == posTokens {
+				if startPos(r[i]) == tabulationIndex {
 					var errCri error
 					a.CriticalLev, errCri = strconv.ParseFloat(strings.Trim(vals[1], "  \n"), 64)
 					if errCri != nil {
 						log.Println(errCri)
 					}
-
-					continue
 				}
 			}
 
 		case "sustainPeriod":
 			{
-				if startPos(r[i]) == posTokens {
+				if startPos(r[i]) == tabulationIndex {
 					var errSus error
 					a.Sustain, errSus = strconv.Atoi(strings.Trim(vals[1], "  \n"))
 					if errSus != nil {
 						log.Println(errSus)
 					}
-
-					continue
 				}
 			}
-		}
 
-		raw = append(raw, r[i])
+		default:
+			{
+				raw = append(raw, r[i])
+			}
+		}
 	}
 
-	tabs := "  "
+	prefix := strings.Repeat(" ", tabulationIndex)
+	alertTabs := strings.Repeat(" ", alertTabIndex)
 
 	alertPrime := []string{
-		tabs + "- alert:" + "\n",
-		tabs + "    name:" + a.Name,
+		alertTabs + "- alert:" + "\n",
+		prefix + "name:" + a.Name,
 		a.Description,
-		tabs + "    type:" + " " + a.Type + "\n",
-		tabs + "    warn:" + " " + strconv.FormatFloat(a.WarningLev, 'f', -1, 64) + "\n",
-		tabs + "    critical:" + " " + strconv.FormatFloat(a.CriticalLev, 'f', -1, 64) + "\n",
-		tabs + "    sustainPeriod:" + " " + strconv.Itoa(a.Sustain) + "\n",
+		prefix + "type:" + " " + a.Type + "\n",
+		prefix + "warn:" + " " + strconv.FormatFloat(a.WarningLev, 'f', -1, 64) + "\n",
+		prefix + "critical:" + " " + strconv.FormatFloat(a.CriticalLev, 'f', -1, 64) + "\n",
+		prefix + "sustainPeriod:" + " " + strconv.Itoa(a.Sustain) + "\n",
 		a.Action,
+		a.Links,
+		a.Query,
 	}
 
 	a.RawAlert = append(a.RawAlert, alertPrime...)

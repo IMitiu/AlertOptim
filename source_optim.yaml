@@ -1,0 +1,55 @@
+dialect:
+  slug: umonitor-alert-group
+  version: v1
+
+container:
+  service_name: &service_name "contact-ingester"
+  group_name: &group_name "CO: contact-ingester [GENERATED]"
+  author: &author co-eng@uber.com
+  highUrgencyPagerDuty: &highUrgencyPagerDuty
+    action: pagerduty
+    enabled: true
+    serviceKey: 642f81302fba4a25a320081163f3d2cb
+
+spec:
+  group:
+    name: *group_name
+    email: *author
+    serviceName: *service_name
+  alerts:
+    - alert:
+        name: High Rate Of SubmitContact Call Failures (ZONED)
+        description: |-
+          Impact: Critical, not able to create a new contact
+          Causes: Can be due to issue with contact service.
+
+          NOTE: During failovers, this alert can be snoozed, the low volume of calls from a particular datacenter will trigger the alert, due to duplicate contact failures.
+                If there's a general increase in failure rate, you can refer to the GLOBAL version of this alert wich ecompasses all remaining live datacenters
+        type: ZONE
+        warn: 5
+        critical: 10
+        sustainPeriod: 600
+        actions:
+          pagerDutyActions: *highUrgencyPagerDuty
+        query: |-
+          e = fetch type:counter service:contactingester name:controllers.blisssubmitcontactcontroller.submitcontact.error | transformNull | sumSeries | summarize 1m ;
+          c = fetch type:counter service:contactingester name:controllers.blisssubmitcontactcontroller.submitcontact.call | transformNull |sumSeries | summarize 1m ;
+          e | asPercent(c) | transformNull 0
+
+    - alert:
+        name: High Rate Of SubmitContact Call Failures (GLOBAL)
+        description: |-
+          Impact: Critical, not able to create a new contact
+          Causes: Can be due to issue with contact service.
+        type: LEGACY
+        warn: 5
+        critical: 10
+        sustainPeriod: 600
+        actions:
+          pagerDutyActions: *highUrgencyPagerDuty
+        query: |-
+          e = fetch type:counter service:contactingester name:controllers.blisssubmitcontactcontroller.submitcontact.error | transformNull | sumSeries | summarize 1m ;
+          c = fetch type:counter service:contactingester name:controllers.blisssubmitcontactcontroller.submitcontact.call | transformNull |sumSeries | summarize 1m ;
+          e | asPercent(c) | transformNull 0
+
+

@@ -1,0 +1,510 @@
+dialect:
+  slug: umonitor-alert-group
+  version: v1
+
+container:
+  service_name: &service_name "contact-ingester"
+  group_name: &group_name "CO: contact-ingester [GENERATED]"
+  author: &author co-eng@uber.com
+  highUrgencyPagerDuty: &highUrgencyPagerDuty
+    - action: pagerduty
+      enabled: true
+      serviceKey: 642f81302fba4a25a320081163f3d2cb
+      data:
+        author: *author
+      trigger: CRITICAL
+      requireManualResolution: false
+  lowUrgencyPagerDuty: &lowUrgencyPagerDuty
+    - action: pagerduty
+      enabled: true
+      serviceKey: 1356d92131a84487ae15b1f0811b9b0f
+      data:
+        author: *author
+      trigger: CRITICAL
+      requireManualResolution: false
+
+  template: &template
+    alert:
+      author: *author
+      access: WARN
+      type: ZONE
+      intervalSeconds: 0
+      tags:
+        - category: service
+          value: contact-ingester
+        - category: team
+          value: customer_obsession_backend
+      links: &links_default
+        - name: readme
+          url: "https://sourcegraph.uberinternal.com/code.uber.internal/rds/contact-ingester/-/blob/README.md"
+        - name: grafana
+          url: "https://ugrafana.uberinternal.com/dashboard/db/contact-ingester?refresh=10s&orgId=1"
+        - name: sentry
+          url: "https://usentry-phx3.uberinternal.com/uber/contact-ingester/"
+        - name: runbook
+          url: "https://code.uberinternal.com/w/teams/co/engineering/runbooks/contact-ingester/"
+
+spec:
+  group:
+    name: *group_name
+    email: *author
+    serviceName: *service_name
+  alerts:
+    - alert:
+        name: High rate of SubmitContact call failures (GLOBAL)
+        actions:
+          pagerDutyActions: *highUrgencyPagerDuty
+        description: |-
+          Impact: Critical, not able to create a new contact
+          Causes: Can be due to issue with contact service.
+        query: |-
+          e = fetch type:counter service:contactingester name:controllers.blisssubmitcontactcontroller.submitcontact.error | transformNull | sumSeries | summarize 1m ;
+          c = fetch type:counter service:contactingester name:controllers.blisssubmitcontactcontroller.submitcontact.call | transformNull |sumSeries | summarize 1m ;
+          e | asPercent(c) | transformNull 0
+        type: LEGACY
+        sustainPeriod: 600
+        warn: 5
+        critical: 10
+      template: *template
+
+    - alert:
+        name: High rate of SubmitContact call failures (ZONED)
+        actions:
+          pagerDutyActions: *highUrgencyPagerDuty
+        description: |-
+          Impact: Critical, not able to create a new contact
+          Causes: Can be due to issue with contact service.
+
+          NOTE: During failovers, this alert can be snoozed, the low volume of calls from a particular datacenter will trigger the alert, due to duplicate contact failures.
+                If there's a general increase in failure rate, you can refer to the GLOBAL version of this alert wich ecompasses all remaining live datacenters
+        query: |-
+          e = fetch type:counter service:contactingester name:controllers.blisssubmitcontactcontroller.submitcontact.error | transformNull | sumSeries | summarize 1m ;
+          c = fetch type:counter service:contactingester name:controllers.blisssubmitcontactcontroller.submitcontact.call | transformNull |sumSeries | summarize 1m ;
+          e | asPercent(c) | transformNull 0
+        type: ZONE
+        sustainPeriod: 600
+        warn: 5
+        critical: 10
+      template: *template
+
+    - alert:
+        name: High rate of CreateLoggedOutUserContact (LOUS) call failures
+        actions:
+          pagerDutyActions: *highUrgencyPagerDuty
+        description: |-
+          Impact: Critical, not able to create contact.
+          Causes: Can be due to error from contact service.
+        links:
+          - isGenerated: false
+            name: Graphana contact-ingester
+            url: https://ugrafana.uberinternal.com/d/KvVHQV5Mz/contactingester-createloggedoutusercontact?orgId=1
+        query:
+          "e = fetch service:contactingester function:createloggedoutusercontact layer:handler type:counter name:failures
+          | sum | scaleToSeconds 60 | transformNull 0; \nc = fetch service:contactingester
+          function:createloggedoutusercontact layer:handler type:counter name:calls | sum | scaleToSeconds 60 |
+          transformNull 0;\ne | asPercent(c)"
+        schedule:
+          dailySchedule:
+            - endTime: "2016-03-02T23:59:00-08:00"
+              startTime: "2016-03-02T08:00:00-08:00"
+        sustainPeriod: 300
+        warn: 1
+        critical: 5
+      template: *template
+
+    - alert:
+        name: Contact Ingester Panic
+        actions:
+          pagerDutyActions: *highUrgencyPagerDuty
+          uDeployActions:
+            - action: udeploy
+              enabled: true
+              trigger: CRITICAL
+        warn: 0.5
+        critical: 0.5
+        description: |-
+          This alert is fired when there is a PANIC in Contact Ingester.
+
+          Panics are unhandled exceptions and shouldn't occur in the service, since it can bring down the host-box and could potentially cause rebooting of the service.
+
+          When you receive this alert,
+          1. check for any active deployments for Contact Ingester in  https://udeploy.uberinternal.com/service/
+          2. if there is a deployment, reach out to the deployment owner and ask them to rollback if their deployment is related to the panic.
+          3. if this not related to a deployment, check the following usentry
+          - https://usentry-dca1.uberinternal.com/uber/contact-ingester/
+          - https://usentry-phx3.uberinternal.com/uber/contact-ingester/
+          4. your priority is to mitigate the impact. If you are able to identify the line of code that's causing the panic, mitigate the issue by deploying a fix for the panic.
+             [see this runbook](https://docs.google.com/document/d/1SsxOK_EYU4jIX_4dAoDj5OdgPJEOpPPGNtIOzRv1Kzs/edit?usp=sharing) if you want more info on what to do
+
+          If you are blocked, uchat/text/call Darshan Reddy (@darshan) or Monis Khan (@monisk)
+        query: fetch service:contactingester name:{panicwrap.panic,panic} | transformNull 0
+        type: ZONE
+      template: *template
+
+    - alert:
+        name: High rate of ConfirmEmail (LOUS) call failures
+        actions:
+          pagerDutyActions: *highUrgencyPagerDuty
+        description: |-
+          Impact: Logged out cannot create contact as they cant confirm their email
+          Causes: Might be the issue with cleoparta for sending emails.
+
+          If this is caused by a bad deploy on the Logged Out Contact Param Builder causing data corruption, a hotfix may be necessary on the Contact-Ingester::anonymous_contact::CreateContact endpoint.
+
+          For example, this incident was caused by the ContactTypeID being nil
+          https://incidents.uberinternal.com/incident/9e087e0b-ff81-4504-9c1f-a03fc68c50be
+
+          Reach out to chrislee if a hotfix is needed.
+        links:
+          - isGenerated: false
+            name: Graphana contact-ingester
+            url: https://graphite.uberinternal.com/grafana2/dashboard/db/contact-ingester
+        query:
+          e = fetch type:counter service:contactingester name:contactingesterhandler.confirmemail.error.other | sum | summarize 1m | transformNull 0;
+          c = fetch type:counter service:contactingester name:contactingesterhandler.confirmemail.call | sum | summarize 1m | transformNull 0;
+          e | asPercent(c)
+        schedule:
+          dailySchedule:
+            - endTime: "2016-03-02T23:59:00-08:00"
+              startTime: "2016-03-02T08:00:00-08:00"
+        sustainPeriod: 300
+        warn: 1
+        critical: 5
+      template: *template
+
+    - alert:
+        name: High number of dropped logs
+        actions:
+          pagerDutyActions: *highUrgencyPagerDuty
+        sustainPeriod: 600
+        warn: 0.1
+        critical: 1
+        description: |-
+          This alert is fired when there is a high rate of dropped logs in Contact Ingester.
+          This means there are logs not being recorded, loss of logs lead to loss of visibility while debugging.
+
+          When you receive this alert,
+          1. Investigate if logs are dropped [ELK Dashboard](https://elk.uberinternal.com/topic/contact-ingester)
+          2. Invesigate if the logs are being dropped due to type conflicts or dynamic keys [Log Search Dropped Events](https://search.uberinternal.com/#/dashboard/elasticsearch/Log%20Search%20Dropped%20Events?kafka_topic=contact-ingester)
+          3. Investigate [ELK Dropped Events Grafana Dashboard](https://ugrafana.uberinternal.com/dashboard/db/elk-dropped-events?orgId=1&var-DC=All&var-bulk_type=All&var-topic=contact-ingester)
+
+          If logs are being dropped make sure to
+          1. Understand why logs are being dropped, if the code is violating any of the following, logs will be dropped. Identify the reason
+             - The set of invalid characters for metric names and tag values is ['+', ',', '=', ' ', ':', '|', '\n']. The set of invalid characters for metric keys is ['+', ',', '=', ' ', ':', '|', '\n', '.']. It is the same as that for metric names and tag values but periods are also invalid.
+             - Don’t use programmatically generated metrics names, such as ones that contain UUIDs, pids, and other variables that change frequently.
+             - Don’t emit timestamps.
+             - Avoid using metrics names that contain fields outside of your control.
+             - Avoid tags that will cause high cardinality such as city_id, hostnames, job_ids, and so on.
+
+             Reference [M3 Data Model](https://engdocs.uberinternal.com/m3_and_umonitor/intro/data_model.html)
+
+          2. Make the change in the code base to fix the dropped logs
+             - If you are not comfortable making a change in the repository, inform the author of the code change and ask them to revert or fix immediately
+             - If author is unreachable, revert the change.
+
+        query: fetch service:mesos-rtlogstash name:bulk_events topic:contact-ingester type:counter | summarize 10m | transformNull 0 | sum | alias Logs Dropped
+        type: ZONE
+      template: *template
+
+    - alert:
+        name: Low request volume for LOUS
+        actions:
+          pagerDutyActions: *lowUrgencyPagerDuty
+        description: |+
+          This alert is to catch low volume of CreateLoggedOutUserContact requests for LOUS flow.
+          If this alert fires it means we're not inggesting Logged Out user tickets. This is user facing.
+        isSLA: false
+        links:
+          - isGenerated: false
+            name: CreateLoggedOutUserContact endpoint
+            url: https://ugrafana.uberinternal.com/d/KvVHQV5Mz/contactingester-createloggedoutusercontact?orgId=1&viewPanel=10&fullscreen
+        query: fetch service:contactingester function:createloggedoutusercontact layer:handler type:counter name:calls | transformNull 0 | sum | summarize 2m
+        sustainPeriod: 300
+        type: LEGACY
+        warn: 2
+        critical: 1
+      template: *template
+
+    - alert:
+        name: High latencies in CreateLoggedOutUserContact endpoint for LOUS
+        actions:
+          pagerDutyActions: *lowUrgencyPagerDuty
+        description: |+
+          This alert is to catch high request latencies while running createLoggedOutUserActivity endpoint.
+        isSLA: false
+        links:
+          - isGenerated: false
+            name: CreateLoggedOutUserContact Latency
+            url: https://ugrafana.uberinternal.com/d/KvVHQV5Mz/contactingester-createloggedoutusercontact?orgId=1&viewPanel=9&fullscreen
+        query: fetch service:contactingester function:createloggedoutusercontact layer:handler type:timer timertype:p95 | summarize 1m avg | transformNull 0
+        sustainPeriod: 120
+        type: ZONE
+        warn: 2000
+        critical: 3000
+      template: *template
+
+    - alert:
+        name: High failure rate for CreateInboundContact service endpoint
+        actions:
+          pagerDutyActions: *highUrgencyPagerDuty
+        type: ZONE
+        description: |+
+          This alert is to catch high failure rate of CreateInboundContact requests. This is the endpoint that serves all messaging contact creations.
+
+          - Graphs [here](https://ugrafana.uberinternal.com/d/000017429/contact-ingester)
+          - ELK dashboard for Contact-Ingester [here](https://search.uberinternal.com/#/dashboard/elasticsearch/contact-ingester)
+        query:
+          errors = fetch service:contactingester name:contactingesterhandler.createinboundcontact.error type:counter | transformNull 0 | sum | summarize 1m;
+          calls = fetch service:contactingester name:contactingesterhandler.createinboundcontact.call type:counter | transformNull 0 | sum | summarize 1m;
+          errors | asPercent(calls)
+        warn: 2
+        critical: 3
+        sustainPeriod: 300
+        isSLA: false
+        links:
+          - isGenerated: false
+            name: CreateInboundContact Request Handler Success/Error
+            url: https://ugrafana.uberinternal.com/d/000017429/contact-ingester?refresh=10s&orgId=1&var-dc=dca1&var-Interval=1m&var-Client=All&from=1588706551609&to=1588717351609&panelId=314&fullscreen
+      template: *template
+
+    - alert:
+        name: High failure rate for MakeContactRoutable service endpoint
+        actions:
+          pagerDutyActions: *highUrgencyPagerDuty
+        type: ZONE
+        description: |+
+          This alert is to catch high failure rate of MakeContactRoutable requests. This is the endpoint that makes unroutable contacts to be routable to a Bliss agent.
+
+          - Graphs [here](https://ugrafana.uberinternal.com/d/000017429/contact-ingester)
+          - ELK dashboard for Contact-Ingester [here](https://search.uberinternal.com/#/dashboard/elasticsearch/contact-ingester)
+        query:
+          errors = fetch service:contactingester function:make_contact_routable_handler name:failures | sum | summarize 1m;
+          calls = fetch service:contactingester function:make_contact_routable_handler name:successes | sum | summarize 1m;
+          errors | asPercent(calls)
+        warn: 2
+        critical: 3
+        sustainPeriod: 300
+        isSLA: false
+        links:
+          - isGenerated: false
+            name: CreateInboundContact Request Handler Success/Error
+            url: https://ugrafana.uberinternal.com/d/000017429/contact-ingester?refresh=10s&orgId=1&var-dc=dca1&var-Interval=1m&var-Client=All&from=1588706551609&to=1588717351609&panelId=314&fullscreen
+      template: *template
+
+    - alert:
+        name: High failure rate for CreateInboundContact Kafka message consumption
+        actions:
+          pagerDutyActions: *highUrgencyPagerDuty
+        type: ZONE
+        description: |+
+          This alert is to catch high failure rate of CreateInboundContact messages in kafka topic.
+
+          Kafka consumer will retry every 5 minutes for 3 hours. Failing that it will go into the DLQ.
+
+          - Graphs [here](https://ugrafana.uberinternal.com/d/000017429/contact-ingester)
+          - ELK dashboard for Contact-Ingester [here](https://search.uberinternal.com/#/dashboard/elasticsearch/contact-ingester)
+          - ELK dashboard for Contact-Ingester Kafka consumer errors [here](https://search.uberinternal.com/kibana3v2/#/dashboard/elasticsearch/contact-ingester-kafka-error-logs)
+
+          To recover DLQ messages follow instructions in [README.md](https://sourcegraph.uberinternal.com/code.uber.internal/rds/contact-ingester/-/blob/README.md)
+        query:
+          failures = fetch service:contactingester function:contact_consumer_inboundcontact name:failures | transformNull 0 | sum | summarize 1m;
+          calls = fetch service:contactingester function:contact_consumer_inboundcontact name:calls | transformNull 0 | sum | summarize 1m;
+          failures | asPercent(calls)
+        warn: 5
+        critical: 10
+        sustainPeriod: 60
+        isSLA: false
+        links:
+          - isGenerated: false
+            name: CreateInboundContact Kafka Message Consumer
+            url: https://ugrafana.uberinternal.com/d/000017429/contact-ingester?refresh=10s&orgId=1&var-dc=dca1&var-Interval=1m&var-Client=All&from=1588706551609&to=1588717351609&panelId=319&fullscreen
+          - isGenerated: false
+            name: CreateInboundContact Failed Messages DLQ
+            url: https://ugrafana.uberinternal.com/d/000017429/contact-ingester?refresh=10s&orgId=1&var-dc=dca1&var-Interval=1m&var-Client=All&from=1588706551609&to=1588717351609&panelId=322&fullscreen
+      template: *template
+
+    - alert:
+        name: High failure rate for MakeContactRoutable Kafka message consumption
+        actions:
+          pagerDutyActions: *highUrgencyPagerDuty
+        type: ZONE
+        description: |+
+          This alert is to catch high failure rate of MakeContactRoutable messages in kafka topic.
+
+          Kafka consumer will retry every 5 minutes for 3 hours. Failing that it will go into the DLQ.
+
+          - Graphs [here](https://ugrafana.uberinternal.com/d/000017429/contact-ingester)
+          - ELK dashboard for Contact-Ingester [here](https://search.uberinternal.com/#/dashboard/elasticsearch/contact-ingester)
+          - ELK dashboard for Contact-Ingester Kafka consumer errors [here](https://search.uberinternal.com/kibana3v2/#/dashboard/elasticsearch/contact-ingester-kafka-error-logs)
+
+          To recover DLQ messages follow instructions in [README.md](https://sourcegraph.uberinternal.com/code.uber.internal/rds/contact-ingester/-/blob/README.md)
+        query:
+          failures = fetch service:contactingester function:contact_consumer_makecontactroutable name:failures | transformNull 0 | sum | summarize 1m;
+          calls = fetch service:contactingester function:contact_consumer_makecontactroutable name:calls | transformNull 0 | sum | summarize 1m;
+          failures | asPercent(calls)
+        warn: 10
+        critical: 20
+        sustainPeriod: 60
+        isSLA: false
+        links:
+          - isGenerated: false
+            name: CreateInboundContact Kafka Message Consumer
+            url: https://ugrafana.uberinternal.com/d/000017429/contact-ingester?refresh=10s&orgId=1&var-dc=dca1&var-Interval=1m&var-Client=All&from=1588706551609&to=1588717351609&panelId=319&fullscreen
+          - isGenerated: false
+            name: CreateInboundContact Failed Messages DLQ
+            url: https://ugrafana.uberinternal.com/d/000017429/contact-ingester?refresh=10s&orgId=1&var-dc=dca1&var-Interval=1m&var-Client=All&from=1588706551609&to=1588717351609&panelId=322&fullscreen
+      template: *template
+
+    - alert:
+        name: Failed messages in DLQ
+        actions:
+          pagerDutyActions: *highUrgencyPagerDuty
+        type: ZONE
+        description: |+
+          This alert is to catch failed messages that end up in DLQ. The CreateInboundContact kafka consumer retries every 5 minutes over 3 hours. If it fails during that time, it will stop retrying and add the message to the DLQ.
+
+          Note: Duplicate contact errors do not trigger retries.
+
+          Action: Investigate the cause of the errors
+          - Graphs [here](https://ugrafana.uberinternal.com/d/000017429/contact-ingester)
+          - ELK dashboard for Contact-Ingester [here](https://search.uberinternal.com/#/dashboard/elasticsearch/contact-ingester)
+          - ELK dashboard for Contact-Ingester Kafka consumer errors [here](https://search.uberinternal.com/kibana3v2/#/dashboard/elasticsearch/contact-ingester-kafka-error-logs)
+
+          If this is caused by an outage, recover the messages after outage is mitigated by merging.
+
+          To merge DLQ messages follow instructions in [README.md](https://sourcegraph.uberinternal.com/code.uber.internal/rds/contact-ingester/-/blob/README.md#recover-messages-in-dlq)
+
+          If the DLQ messages are not recoverable or are bad requests:
+          - if it's not business hours, snooze the alert
+          - else ping the team on co-ingestion-sre channel
+
+          Before purging: Make sure to ping co-ingestion-sre channel (do at here during office hours), get an ack before purging.
+
+          To purge the DLQ follow instructions in [README](https://sourcegraph.uberinternal.com/code.uber.internal/rds/contact-ingester/-/blob/README.md#empty-out-dlq)
+        query: fetch service:contactingester consumergroup:contact-ingester-create-inbound-contact-consumer-group name:messaging.consumer.kafka.partition.dlq-offset-lag topic:contact-ingester.create-inbound-contact.publish__contact-ingester-create-inbound-contact-consumer-group__dlq | sum | transformNull 0
+        warn: 10
+        critical: 50
+        sustainPeriod: 0
+        isSLA: false
+        links:
+          - isGenerated: false
+            name: CreateInboundContact Kafka Message Consumer
+            url: https://ugrafana.uberinternal.com/d/000017429/contact-ingester?refresh=10s&orgId=1&var-dc=dca1&var-Interval=1m&var-Client=All&from=1588706551609&to=1588717351609&panelId=319&fullscreen
+          - isGenerated: false
+            name: CreateInboundContact Failed Messages DLQ
+            url: https://ugrafana.uberinternal.com/d/000017429/contact-ingester?refresh=10s&orgId=1&var-dc=dca1&var-Interval=1m&var-Client=All&from=1588706551609&to=1588717351609&panelId=322&fullscreen
+      template: *template
+
+    - alert:
+        name: Low request volume for CreateInboundContact service endpoint
+        actions:
+          pagerDutyActions: *highUrgencyPagerDuty
+        type: LEGACY
+        description: |+
+          Impact: Critical. This alert is to catch low volume of CreateInboundContact requests. This is the endpoint that serves all messaging contact creations.
+
+          If this alert fires it means contacts are not being created.
+
+          - Graphs [here](https://ugrafana.uberinternal.com/d/000017429/contact-ingester)
+          - ELK dashboard for Contact-Ingester [here](https://search.uberinternal.com/#/dashboard/elasticsearch/contact-ingester)
+
+        query: fetch service:contactingester name:contactingesterhandler.createinboundcontact.success type:counter | transformNull 0 | sum | summarize 2m
+        warn: 2
+        critical: 1
+        sustainPeriod: 120
+        isSLA: false
+        links:
+          - isGenerated: false
+            name: CreateInboundContact Request Handler Success/Error
+            url: https://ugrafana.uberinternal.com/d/000017429/contact-ingester?refresh=10s&orgId=1&var-dc=dca1&var-Interval=1m&var-Client=All&from=1588706551609&to=1588717351609&panelId=314&fullscreen
+      template: *template
+
+    - alert:
+        name: High rate of failed query to onstar for CreateInboundContact service endpoint
+        actions:
+          pagerDutyActions: *lowUrgencyPagerDuty
+        type: LEGACY
+        description: |+
+          Impact: Critical. This alert is to catch high rate of failed query to onstar for CreateInboundContact service endpoint.
+
+          If this alert fires it means someone is incorrectly using the app.
+
+          - Graphs [here](https://ugrafana.uberinternal.com/d/000017429/contact-ingester)
+          - ELK dashboard for Contact-Ingester [here](https://search.uberinternal.com/#/dashboard/elasticsearch/contact-ingester)
+
+        query: fetch service:contactingester dc:* type:counter name:onstar_node_not_found | transformNull 0 | sum | summarize 2m
+        warn: 1
+        critical: 5
+        sustainPeriod: 120
+        isSLA: false
+        links:
+          - isGenerated: false
+            name: CreateInboundContact Failed to Query Onstar
+            url: https://ugrafana.uberinternal.com/d/000017429/contact-ingester?viewPanel=429&orgId=1
+      template: *template
+
+    - alert:
+        name: High rate of endpoint calls which exceeds the rate limit
+        actions:
+          pagerDutyActions: *lowUrgencyPagerDuty
+        type: LEGACY
+        description: |+
+          Impact: Critical. This alert is to catch high rate of endpoint calls.
+
+          If this alert fires it means someone is hitting some endpint of the service in a abnormal rate.
+
+          - Graphs [here](https://ugrafana.uberinternal.com/d/000017429/contact-ingester)
+          - ELK dashboard for Contact-Ingester [here](https://search.uberinternal.com/#/dashboard/elasticsearch/contact-ingester)
+
+        query: fetch service:contactingester dc:* type:counter name:reach_rate_limit_error | transformNull 0 | sum | summarize 2m
+        warn: 1
+        critical: 5
+        sustainPeriod: 120
+        isSLA: false
+        links:
+          - isGenerated: false
+            name: Access to some endpoint exceeds rate limit
+            url: https://ugrafana.uberinternal.com/d/000017429/contact-ingester
+          - isGenerated: false
+            name: Blocking Malicious Users
+            url: https://engwiki.uberinternal.com/display/CO/Blocking+Malicious+Users
+      template: *template
+
+    - alert:
+        name: Unconsumed message count too high
+        actions:
+          pagerDutyActions: *lowUrgencyPagerDuty
+        type: ZONE
+        description: |+
+          Impact: Critical. This alert is to catch high count of unconsumed message.
+          Kafka consumers are unable to create contacts faster than incoming request volume. Contact creation is being delayed.
+
+          - Graphs [here](https://ugrafana.uberinternal.com/d/000017429/contact-ingester)
+          - ELK dashboard for Contact-Ingester [here](https://search.uberinternal.com/#/dashboard/elasticsearch/contact-ingester)
+
+        query: fetch service:kafka-consumer-group  name:consumer_lag topic:contact-ingester.create-inbound-contact.publish type:gauge consumergroup:contact-ingester-create-inbound-contact-consumer-group | removeEmpty | aliasByTags cluster topic consumergroup partition | transformNull 0 | sum | summarize 1m
+        warn: 80
+        critical: 100
+        sustainPeriod: 120
+        isSLA: false
+        links:
+          - isGenerated: false
+            name: CreateInboundContact - Unconsumed message count
+            url: https://ugrafana.uberinternal.com/d/000017429/contact-ingester
+      template: *template
+
+    - alert:
+        name: High volume of unconsumed messages
+        actions:
+          pagerDutyActions: *highUrgencyPagerDuty
+        warn: 250
+        critical: 255
+        description: This will alert when the incoming messages to any kafka topics are not being consumed
+        query: "fetch service:{content-ingester,contactingester} name:messaging.consumer.kafka.partition.offset-lag consumergroup:* topic:* | summarize 30s avg | sum topic | transformNull 0 | aliasByTags topic"
+        type: ZONE
+        sustainPeriod: 1800
+        links:
+          - isGenerated: false
+            name: CreateInboundContact - Unconsumed message count
+            url: https://ugrafana.uberinternal.com/d/000017429/contact-ingester
+      template: *template
